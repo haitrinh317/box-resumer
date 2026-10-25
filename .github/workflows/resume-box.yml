@@ -1,0 +1,46 @@
+# Bật lại box instabox khi nó bị pause (gói Free: pause sau 30 phút rảnh hoặc 8 giờ chạy).
+# Cần secret INSTABOX_API_KEY (scope machines:read + machines:write).
+name: resume-box
+
+# Kích hoạt từ ngoài (cron-job.org gọi API workflow_dispatch mỗi 5 phút) vì cron của GitHub chạy quá thưa.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: resume-box
+  cancel-in-progress: false
+
+jobs:
+  resume:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+      INSTABOX_NO_TELEMETRY: "1"
+      BOX: chuchinh-agent
+    steps:
+      - name: Cài instabox CLI (installer tự kiểm checksum)
+        run: |
+          # installer từ chối khi checksum lệch (xảy ra lúc instabox đang deploy bản mới) -> thử lại
+          for i in 1 2 3 4; do
+            curl -fsSL https://instabox.sh/install.sh | INSTABOX_INSTALL_DIR="$HOME/.local/bin" sh && break
+            [ "$i" = 4 ] && exit 1
+            sleep 30
+          done
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Bật lại nếu box không chạy
+        run: |
+          info=$(instabox get "$BOX" --json)
+          state=$(echo "$info" | jq -r .state)
+          # Dòng này để đo chu kỳ pause thật: tìm "LOG-PAUSE" trong log các lần chạy.
+          # updatedAt của box đang paused ~ lúc nó đổi sang paused. Không exec vào box
+          # khi đang chạy (exec có thể tính là hoạt động và chặn tự pause vì rảnh).
+          echo "LOG-PAUSE now=$(date -u +%FT%TZ) state=$state updatedAt=$(echo "$info" | jq -r .updatedAt) autoSuspend=$(echo "$info" | jq -r .autoSuspendAfterSeconds) timeoutAt=$(echo "$info" | jq -r .timeoutAt)"
+          if [ "$state" = "running" ]; then exit 0; fi
+          # wake: box tự pause vì rảnh; resume/start: box bị pause/stop do hết giờ
+          method=wake
+          instabox wake "$BOX" || { method=resume; instabox resume "$BOX"; } || { method=start; instabox start "$BOX"; }
+          echo "LOG-PAUSE resumed_by=$method new_state=$(instabox get "$BOX" --json | jq -r .state)"
+          # Uptime của VM sau khi bật: cho biết processes có được giữ không và bộ đếm giờ chạy
+          instabox exec "$BOX" -- 'uptime -s; uptime -p' || true
