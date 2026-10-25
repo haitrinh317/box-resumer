@@ -44,3 +44,6 @@ jobs:
           echo "LOG-PAUSE resumed_by=$method new_state=$(instabox get "$BOX" --json | jq -r .state)"
           # Uptime của VM sau khi bật: cho biết processes có được giữ không và bộ đếm giờ chạy
           instabox exec "$BOX" -- 'uptime -s; uptime -p' || true
+          sleep 10
+          # Sau resume, daemon antigravity (service systemd cấp user) cần khởi động lại để kết nối lại
+          instabox exec "$BOX" -- 'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart antigravity-cli-daemon.service && XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user is-active antigravity-cli-daemon.service' || echo "LOG-PAUSE antigravity restart FAILED"
